@@ -15,7 +15,9 @@ headers = {
 
 DB_NAME = "google_repositories.db"
 
+
 def convert_stars(star_text):
+
     if not star_text:
         return 0
 
@@ -37,13 +39,12 @@ def convert_stars(star_text):
     return 0
 
 
-# 主要言語を取得する関数
-
 def get_main_language(page, repo_name):
 
     detail_url = f"https://github.com/google/{repo_name}"
 
     try:
+
         page.goto(
             detail_url,
             wait_until="domcontentloaded",
@@ -67,11 +68,13 @@ def get_main_language(page, repo_name):
         return "不明"
 
     except PlaywrightTimeoutError:
+
         print(f"{repo_name}: 言語情報が見つかりませんでした")
         time.sleep(1)
         return "不明"
 
     except Exception as e:
+
         print(f"{repo_name}: 言語取得エラー: {e}")
         time.sleep(1)
         return "不明"
@@ -89,6 +92,8 @@ CREATE TABLE IF NOT EXISTS repositories (
 )
 """)
 
+cursor.execute("DELETE FROM repositories")
+
 conn.commit()
 
 
@@ -104,11 +109,8 @@ time.sleep(1)
 
 soup = BeautifulSoup(response.text, "html.parser")
 
-# リポジトリ名のリンクを取得
 repo_links = soup.select('h3 a[href^="/google/"]')
 
-
-#  Playwrightを起動する
 
 playwright = sync_playwright().start()
 
@@ -116,24 +118,31 @@ browser = playwright.chromium.launch(headless=True)
 
 page = browser.new_page()
 
+
 count = 0
+
+seen_repositories = set()
 
 for repo in repo_links:
 
-    # リポジトリ名を取得
     href = repo.get("href", "")
     repo_name = href.split("/")[-1]
 
-    if not repo_name:
+    if not repo_name or repo_name in seen_repositories:
         continue
 
-    # リポジトリカードを取得
-    card = repo.parent.parent
+    seen_repositories.add(repo_name)
 
-    # スター数を取得
-    star_link = card.select_one('a[href$="/stargazers"]')
+    # スター数のリンクをリポジトリ名から直接探す
+    star_link = soup.find(
+        "a",
+        href=re.compile(
+            rf"^/google/{re.escape(repo_name)}/stargazers(?:\?|$)"
+        )
+    )
 
     if star_link:
+
         star_text = (
             star_link.get("aria-label")
             or star_link.get_text(strip=True)
@@ -142,12 +151,12 @@ for repo in repo_links:
         stars = convert_stars(star_text)
 
     else:
-        stars = 0
 
-    # 主要言語を取得
+        stars = 0
+        print(f"注意: {repo_name} のスター数が見つかりません")
+
     language = get_main_language(page, repo_name)
 
-    # データベースに保存
     cursor.execute("""
         INSERT INTO repositories (
             repository_name,
@@ -155,10 +164,6 @@ for repo in repo_links:
             stars
         )
         VALUES (?, ?, ?)
-        ON CONFLICT(repository_name)
-        DO UPDATE SET
-            main_language = excluded.main_language,
-            stars = excluded.stars
     """, (repo_name, language, stars))
 
     count += 1
